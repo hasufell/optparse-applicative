@@ -1,4 +1,6 @@
 {-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE PatternGuards #-}
 module Options.Applicative.Common (
   -- * Option parsers
   --
@@ -55,16 +57,18 @@ import Control.Applicative
 import Control.Monad (guard, mzero, msum, when)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.State (StateT(..), get, put, runStateT)
-import Data.List (isPrefixOf)
 import Data.Maybe (maybeToList, isJust, isNothing)
 import Prelude
 
 import Options.Applicative.Internal
 import Options.Applicative.Types
 
-showOption :: OptName -> String
-showOption (OptLong n) = "--" ++ n
-showOption (OptShort n) = '-' : [n]
+import System.OsString
+import qualified Options.Applicative.OsString as OsStr
+
+showOption :: OptName -> OsString
+showOption (OptLong n) = [osstr|--|] <> n
+showOption (OptShort n) = [osstr|-|] <> pack [n]
 
 optionNames :: OptReader a -> [OptName]
 optionNames (OptReader names _ _) = names
@@ -73,7 +77,7 @@ optionNames _ = []
 
 isOptionPrefix :: OptName -> OptName -> Bool
 isOptionPrefix (OptShort x) (OptShort y) = x == y
-isOptionPrefix (OptLong x) (OptLong y) = x `isPrefixOf` y
+isOptionPrefix (OptLong x) (OptLong y) = x `OsStr.isPrefixOf` y
 isOptionPrefix _ _ = False
 
 -- | Create a parser composed of a single option.
@@ -86,7 +90,7 @@ optMatches disambiguate opt (OptWord arg1 val) = case opt of
     guard $ has_name arg1 names
     Just $ do
       args <- get
-      let mb_args = uncons $ maybeToList val ++ args
+      let mb_args = uncons $ maybeToList val <> args
       let missing_arg = missingArgP (no_arg_err $ showOption arg1) (crCompleter rdr)
       (arg', args') <- maybe (lift missing_arg) return mb_args
       put args'
@@ -101,12 +105,12 @@ optMatches disambiguate opt (OptWord arg1 val) = case opt of
     guard $ isShortName arg1 || isNothing val
     Just $ do
       args <- get
-      let val' = ('-' :) <$> val
-      put $ maybeToList val' ++ args
+      let val' = (unsafeFromChar '-' :) . unpack <$> val
+      put $ maybeToList (pack <$> val') <> args
       return x
   _ -> Nothing
   where
-    errorFor name msg = "option " ++ showOption name ++ ": " ++ msg
+    errorFor name msg = [osstr|option |] <> showOption name <> [osstr|: |] <> msg
 
     has_name a
       | disambiguate = any (isOptionPrefix a)
@@ -116,20 +120,28 @@ isArg :: OptReader a -> Bool
 isArg (ArgReader _) = True
 isArg _ = False
 
-data OptWord = OptWord OptName (Maybe String)
+data OptWord = OptWord OptName (Maybe OsString)
 
-parseWord :: String -> Maybe OptWord
-parseWord ('-' : '-' : w) = Just $ let
-  (opt, arg) = case span (/= '=') w of
-    (_, "") -> (w, Nothing)
-    (w', _ : rest) -> (w', Just rest)
-  in OptWord (OptLong opt) arg
-parseWord ('-' : w) = case w of
-  [] -> Nothing
-  (a : rest) -> Just $ let
-    arg = rest <$ guard (not (null rest))
-    in OptWord (OptShort a) arg
-parseWord _ = Nothing
+parseWord :: OsString -> Maybe OptWord
+parseWord ostr
+  | Just (a, b, w) <- OsStr.uncons2 ostr
+  , a == unsafeFromChar '-'
+  , b == unsafeFromChar '-'
+  = Just $ let
+    (opt, arg) = case OsStr.span (/= unsafeFromChar '=') w of
+      (w', y)
+        | y == mempty -> (w, Nothing)
+        | let rest = OsStr.tail y
+        -> (w', Just rest)
+    in OptWord (OptLong opt) arg
+  | Just (a, w) <- OsStr.uncons ostr
+  , a == unsafeFromChar '-'
+  = case OsStr.uncons w of
+      Nothing -> Nothing
+      Just (a', rest) -> Just $ let
+        arg = rest <$ guard (mempty /= rest)
+        in OptWord (OptShort a') arg
+  | otherwise = Nothing
 
 searchParser :: Monad m
              => (forall r . Option r -> NondetT m (Parser r))
@@ -160,7 +172,10 @@ searchOpt pprefs w = searchParser $ \opt -> do
     Just matcher -> lift $ fmap pure matcher
     Nothing -> mzero
 
-searchArg :: MonadP m => ParserPrefs -> String -> Parser a
+searchArg :: MonadP m
+          => ParserPrefs
+          -> OsString
+          -> Parser a
           -> NondetT (StateT Args m) (Parser a)
 searchArg prefs arg =
   searchParser $ \opt -> do
@@ -186,11 +201,15 @@ searchArg prefs arg =
 
   where
     cmdMatches cs
-      | prefDisambiguate prefs = snd <$> filter (isPrefixOf arg . fst) cs
+      | prefDisambiguate prefs = snd <$> filter (OsStr.isPrefixOf arg . fst) cs
       | otherwise = maybeToList (lookup arg cs)
 
-stepParser :: MonadP m => ParserPrefs -> ArgPolicy -> String
-           -> Parser a -> NondetT (StateT Args m) (Parser a)
+stepParser :: MonadP m
+           => ParserPrefs
+           -> ArgPolicy
+           -> OsString
+           -> Parser a
+           -> NondetT (StateT Args m) (Parser a)
 stepParser pprefs AllPositionals arg p =
   searchArg pprefs arg p
 stepParser pprefs ForwardOptions arg p = case parseWord arg of
@@ -205,8 +224,10 @@ stepParser pprefs _ arg p = case parseWord arg of
 -- arguments.  This function returns an error if any parsing error occurs, or
 -- if any options are missing and don't have a default value.
 runParser :: MonadP m => ArgPolicy -> IsCmdStart -> Parser a -> Args -> m (a, Args)
-runParser policy _ p ("--" : argt) | policy /= AllPositionals
-                                   = runParser AllPositionals CmdCont p argt
+runParser policy _ p args
+  | Just (a, argt) <- uncons args
+  , a == [osstr|"--"|]
+  , policy /= AllPositionals = runParser AllPositionals CmdCont p argt
 runParser policy isCmdStart p args = case args of
   [] -> exitP isCmdStart policy p result
   (arg : argt) -> do
@@ -224,14 +245,14 @@ runParser policy isCmdStart p args = case args of
       NoIntersperse -> if isJust (parseWord a) then NoIntersperse else AllPositionals
       x             -> x
 
-runParserStep :: MonadP m => ArgPolicy -> Parser a -> String -> Args -> m (Maybe (Parser a), Args)
+runParserStep :: MonadP m => ArgPolicy -> Parser a -> OsString -> Args -> m (Maybe (Parser a), Args)
 runParserStep policy p arg args = do
   prefs <- getPrefs
   flip runStateT args
     $ disamb (not (prefDisambiguate prefs))
     $ stepParser prefs policy arg p
 
-parseError :: MonadP m => String -> Parser x -> m a
+parseError :: MonadP m => OsString -> Parser x -> m a
 parseError arg = errorP . UnexpectedError arg . SomeParser
 
 runParserInfo :: MonadP m => ParserInfo a -> Args -> m a

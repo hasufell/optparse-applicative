@@ -1,0 +1,7 @@
+packages: .
+
+if(os(windows))
+    source-repository-package
+      type: git
+      location: https://github.com/haskell/win32.git
+      tag: 427f1a9a2bc4bf451c1fee810216fdea7af2035b

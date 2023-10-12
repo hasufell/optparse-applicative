@@ -38,8 +38,10 @@ import Control.Monad.Trans.State (StateT, get, put, modify, evalStateT, runState
 
 import Options.Applicative.Types
 
+import System.OsString
+
 class (Alternative m, MonadPlus m) => MonadP m where
-  enterContext :: String -> ParserInfo a -> m ()
+  enterContext :: OsString -> ParserInfo a -> m ()
   exitContext :: m ()
   getPrefs :: m ParserPrefs
 
@@ -68,7 +70,7 @@ instance MonadPlus P where
   mzero = P mzero
   mplus (P x) (P y) = P $ mplus x y
 
-contextNames :: [Context] -> [String]
+contextNames :: [Context] -> [OsString]
 contextNames ns =
   let go (Context n _) = n
   in  reverse $ go <$> ns
@@ -95,10 +97,10 @@ uncons :: [a] -> Maybe (a, [a])
 uncons [] = Nothing
 uncons (x : xs) = Just (x, xs)
 
-runReadM :: MonadP m => ReadM a -> String -> m a
+runReadM :: MonadP m => ReadM a -> OsString -> m a
 runReadM (ReadM r) s = hoistEither . runExcept $ runReaderT r s
 
-withReadM :: (String -> String) -> ReadM a -> ReadM a
+withReadM :: (OsString -> OsString) -> ReadM a -> ReadM a
 withReadM f = ReadM . mapReaderT (withExcept f') . unReadM
   where
     f' (ErrorMsg err) = ErrorMsg (f err)
