@@ -97,6 +97,7 @@ library
                      , Options.Applicative.Help.Pretty
                      , Options.Applicative.Help.Types
                      , Options.Applicative.NonEmpty
+                     , Options.Applicative.OsString
                      , Options.Applicative.Types
                      , Options.Applicative.Internal
 
@@ -106,6 +107,11 @@ library
                      , transformers-compat             >= 0.3 && < 0.8
                      , prettyprinter                   >= 1.7 && < 1.8
                      , prettyprinter-ansi-terminal     >= 1.1 && < 1.2
+                     , filepath                        >= 1.4.100.0 && < 1.5
+  if os(windows)
+    build-depends:   Win32                             >= 2.13.4.0  && < 2.14.0.0
+  else
+    build-depends:   unix                              >= 2.8.0.0   && < 2.9.0.0
 
   if flag(process)
     build-depends:     process                         >= 1.0 && < 1.7

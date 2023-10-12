@@ -55,7 +55,6 @@ import Control.Monad.Trans.Except (Except, throwE)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Reader (ReaderT, ask)
 import qualified Control.Monad.Fail as Fail
-import Data.Semigroup hiding (Option)
 import Prelude
 
 import System.Exit (ExitCode(..))
@@ -64,15 +63,18 @@ import Options.Applicative.Help.Types
 import Options.Applicative.Help.Pretty
 import Options.Applicative.Help.Chunk
 
+import System.OsString (OsString, OsChar)
+import Options.Applicative.OsString
+
 
 data ParseError
-  = ErrorMsg String
+  = ErrorMsg OsString
   | InfoMsg String
   | ShowHelpText (Maybe String)
   | UnknownError
   | MissingError IsCmdStart SomeParser
-  | ExpectsArgError String
-  | UnexpectedError String SomeParser
+  | ExpectsArgError OsString
+  | UnexpectedError OsString SomeParser
 
 data IsCmdStart = CmdStart | CmdCont
   deriving Show
@@ -129,8 +131,8 @@ data ParserPrefs = ParserPrefs
   , prefTabulateFill ::Int       -- ^ Indentation width for tables
   } deriving (Eq, Show)
 
-data OptName = OptShort !Char
-             | OptLong !String
+data OptName = OptShort !OsChar
+             | OptLong !OsString
   deriving (Eq, Ord, Show)
 
 isShortName :: OptName -> Bool
@@ -177,7 +179,7 @@ data SomeParser = forall a . SomeParser (Parser a)
 
 -- | Subparser context, containing the 'name' of the subparser and its parser info.
 --   Used by parserFailure to display relevant usage information when parsing inside a subparser fails.
-data Context = forall a. Context String (ParserInfo a)
+data Context = forall a. Context OsString (ParserInfo a)
 
 instance Show (Option a) where
     show opt = "Option {optProps = " ++ show (optProps opt) ++ "}"
@@ -187,7 +189,7 @@ instance Functor Option where
 
 -- | A newtype over 'ReaderT String Except', used by option readers.
 newtype ReadM a = ReadM
-  { unReadM :: ReaderT String (Except ParseError) a }
+  { unReadM :: ReaderT OsString (Except ParseError) a }
 
 instance Functor ReadM where
   fmap f (ReadM r) = ReadM (fmap f r)
@@ -209,14 +211,14 @@ instance Monad ReadM where
 #endif
 
 instance Fail.MonadFail ReadM where
-  fail = readerError
+  fail = readerError . encodeUtfSafe
 
 instance MonadPlus ReadM where
   mzero = ReadM mzero
   mplus (ReadM x) (ReadM y) = ReadM $ mplus x y
 
 -- | Return the value being read.
-readerAsk :: ReadM String
+readerAsk :: ReadM OsString
 readerAsk = ReadM ask
 
 -- | Abort option reader by exiting with a 'ParseError'.
@@ -224,7 +226,7 @@ readerAbort :: ParseError -> ReadM a
 readerAbort = ReadM . lift . throwE
 
 -- | Abort option reader by exiting with an error message.
-readerError :: String -> ReadM a
+readerError :: OsString -> ReadM a
 readerError = readerAbort . ErrorMsg
 
 data CReader a = CReader
@@ -236,13 +238,13 @@ instance Functor CReader where
 
 -- | An 'OptReader' defines whether an option matches an command line argument.
 data OptReader a
-  = OptReader [OptName] (CReader a) (String -> ParseError)
+  = OptReader [OptName] (CReader a) (OsString -> ParseError)
   -- ^ option reader
   | FlagReader [OptName] !a
   -- ^ flag reader
   | ArgReader (CReader a)
   -- ^ argument reader
-  | CmdReader (Maybe String) [(String, ParserInfo a)]
+  | CmdReader (Maybe OsString) [(OsString, ParserInfo a)]
   -- ^ command reader
 
 instance Functor OptReader where
@@ -371,7 +373,7 @@ instance Monad ParserResult where
   Failure f >>= _ = Failure f
   CompletionInvoked c >>= _ = CompletionInvoked c
 
-type Args = [String]
+type Args = [OsString]
 
 -- | Policy for how to handle options within the parse
 data ArgPolicy

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE RankNTypes #-}
 module Options.Applicative.Extra (
   -- * Extra parser utilities
@@ -26,7 +27,7 @@ import Control.Monad (void)
 import Data.Monoid
 import Data.Foldable (traverse_)
 import Prelude
-import System.Environment (getArgs, getProgName)
+import System.Environment (getProgName)
 import System.Exit (exitSuccess, exitWith, ExitCode(..))
 import System.IO (hPutStrLn, stderr)
 
@@ -38,6 +39,9 @@ import Options.Applicative.Help
 
 import Options.Applicative.Internal
 import Options.Applicative.Types
+
+import Options.Applicative.OsString
+
 
 -- | A hidden \"helper\" option which always fails.
 --
@@ -150,7 +154,7 @@ getParseResult _ = Nothing
 -- | The most general way to run a program description in pure code.
 execParserPure :: ParserPrefs       -- ^ Global preferences for this parser
                -> ParserInfo a      -- ^ Description of the program to run
-               -> [String]          -- ^ Program arguments
+               -> [OsString]        -- ^ Program arguments
                -> ParserResult a
 execParserPure pprefs pinfo args =
   case runP p pprefs of
